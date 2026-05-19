@@ -3,4 +3,16 @@ ktor:
     port: 8080
   application:
     modules:
-      - com.example.RoutingKt.configureRouting
+      - com.example.ApplicationKt.module
+
+jwt:
+  secret: "fitness-secret-key-256-bit-long-enough"
+  issuer: "fitness-app"
+  audience: "fitness-app-users"
+  expiry: 86400000
+
+database:
+  url: "jdbc:postgresql://localhost:5432/fitnessdb"
+  driver: "org.postgresql.Driver"
+  user: "postgres"
+  password: "postgres"
