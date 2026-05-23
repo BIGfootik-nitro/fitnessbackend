@@ -1,6 +1,8 @@
 package com.example.data.repository
 
 import com.example.data.db.tables.Clients
+import com.example.data.db.tables.Subscriptions
+import com.example.data.db.tables.Visits
 import com.example.domain.model.Client
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -55,6 +57,8 @@ class ClientRepository {
 
     fun delete(id: UUID): Boolean {
         return transaction {
+            Visits.deleteWhere { Visits.clientId eq id }
+            Subscriptions.deleteWhere { Subscriptions.clientId eq id }
             Clients.deleteWhere { Clients.id eq id } > 0
         }
     }
