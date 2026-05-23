@@ -4,11 +4,13 @@ import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import com.example.data.dto.*
 import com.example.data.repository.*
+import com.example.domain.model.BookingStatus
 import com.example.domain.model.SubscriptionType
 import com.example.domain.model.UserRole
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
+import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -18,11 +20,19 @@ import java.time.Instant
 import java.time.LocalDate
 import java.util.*
 
+private fun ApplicationCall.userId(): UUID =
+    UUID.fromString(principal<JWTPrincipal>()!!.payload.getClaim("userId").asString())
+
+private fun ApplicationCall.role(): UserRole =
+    UserRole.valueOf(principal<JWTPrincipal>()!!.payload.getClaim("role").asString())
+
 fun Application.configureRouting() {
     val userRepo = UserRepository()
     val clientRepo = ClientRepository()
     val subRepo = SubscriptionRepository()
     val visitRepo = VisitRepository()
+    val bookingRepo = BookingRepository()
+    val notificationRepo = NotificationRepository()
 
     val secret = environment.config.property("jwt.secret").getString()
     val issuer = environment.config.property("jwt.issuer").getString()
@@ -42,7 +52,14 @@ fun Application.configureRouting() {
             }
             val role = runCatching { UserRole.valueOf(req.role.uppercase()) }.getOrDefault(UserRole.TRAINER)
             val hash = BCrypt.hashpw(req.password, BCrypt.gensalt())
-            userRepo.create(req.username, hash, role)
+            val userId = userRepo.create(req.username, hash, role)
+
+            // если это клиент — заводим профиль клиента сразу
+            if (role == UserRole.CLIENT) {
+                clientRepo.create(req.username, null, null, null, userId)
+                notificationRepo.create(userId, "Добро пожаловать!",
+                    "Спасибо за регистрацию. Оформите абонемент, чтобы начать тренировки.")
+            }
             call.respond(HttpStatusCode.Created, mapOf("message" to "User created"))
         }
 
@@ -64,7 +81,128 @@ fun Application.configureRouting() {
         }
 
         authenticate("jwt-auth") {
-            // Clients
+            // ===== Профиль текущего пользователя =====
+            get("/me") {
+                val uid = call.userId()
+                val user = userRepo.findById(uid) ?: run {
+                    call.respond(HttpStatusCode.NotFound); return@get
+                }
+                val client = clientRepo.getByUserId(uid)
+                call.respond(MeResponse(
+                    userId = user.id.toString(),
+                    username = user.username,
+                    role = user.role.name,
+                    client = client?.let {
+                        ClientResponse(it.id.toString(), it.fullName, it.phone, it.email, it.birthDate?.toString())
+                    }
+                ))
+            }
+
+            put("/me/profile") {
+                val uid = call.userId()
+                val req = call.receive<ClientRequest>()
+                val existing = clientRepo.getByUserId(uid) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
+                    return@put
+                }
+                val birthDate = req.birthDate?.let { LocalDate.parse(it) }
+                clientRepo.update(existing.id, req.fullName, req.phone, req.email, birthDate)
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Updated"))
+            }
+
+            get("/me/subscriptions") {
+                val client = clientRepo.getByUserId(call.userId()) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
+                    return@get
+                }
+                val subs = subRepo.getByClientId(client.id)
+                call.respond(subs.map {
+                    SubscriptionResponse(it.id.toString(), it.clientId.toString(), it.type.name,
+                        it.startDate.toString(), it.endDate.toString(), it.isFrozen, it.price.toString())
+                })
+            }
+
+            post("/me/subscriptions") {
+                val uid = call.userId()
+                val client = clientRepo.getByUserId(uid) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
+                    return@post
+                }
+                val req = call.receive<SubscriptionRequest>()
+                val type = SubscriptionType.valueOf(req.type.uppercase())
+                val id = subRepo.create(client.id, type,
+                    LocalDate.parse(req.startDate),
+                    LocalDate.parse(req.endDate),
+                    BigDecimal(req.price))
+                notificationRepo.create(uid, "Абонемент оформлен",
+                    "Ваш ${type.name.lowercase()} абонемент активен с ${req.startDate} по ${req.endDate}.")
+                call.respond(HttpStatusCode.Created, mapOf("id" to id.toString()))
+            }
+
+            get("/me/visits") {
+                val client = clientRepo.getByUserId(call.userId()) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
+                    return@get
+                }
+                val visits = visitRepo.getByClientId(client.id)
+                call.respond(visits.map {
+                    VisitResponse(it.id.toString(), it.clientId.toString(), it.visitedAt.toString(), it.note)
+                })
+            }
+
+            get("/me/bookings") {
+                val client = clientRepo.getByUserId(call.userId()) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
+                    return@get
+                }
+                val bookings = bookingRepo.getByClientId(client.id)
+                call.respond(bookings.map {
+                    BookingResponse(it.id.toString(), it.clientId.toString(), null,
+                        it.scheduledAt.toString(), it.status.name, it.note)
+                })
+            }
+
+            post("/me/bookings") {
+                val uid = call.userId()
+                val client = clientRepo.getByUserId(uid) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
+                    return@post
+                }
+                val req = call.receive<BookingRequest>()
+                val id = bookingRepo.create(client.id, Instant.parse(req.scheduledAt), req.note)
+                notificationRepo.create(uid, "Заявка отправлена",
+                    "Запись на тренировку ${req.scheduledAt.substringBefore('T')} ожидает подтверждения.")
+                call.respond(HttpStatusCode.Created, mapOf("id" to id.toString()))
+            }
+
+            patch("/me/bookings/{id}/cancel") {
+                val uid = call.userId()
+                val client = clientRepo.getByUserId(uid) ?: run {
+                    call.respond(HttpStatusCode.NotFound); return@patch
+                }
+                val id = UUID.fromString(call.parameters["id"])
+                val booking = bookingRepo.getById(id)
+                if (booking == null || booking.clientId != client.id) {
+                    call.respond(HttpStatusCode.NotFound); return@patch
+                }
+                bookingRepo.setStatus(id, BookingStatus.CANCELLED)
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Cancelled"))
+            }
+
+            get("/me/notifications") {
+                val list = notificationRepo.getByUserId(call.userId())
+                call.respond(list.map {
+                    NotificationResponse(it.id.toString(), it.title, it.body, it.read, it.createdAt.toString())
+                })
+            }
+
+            patch("/me/notifications/{id}/read") {
+                val id = UUID.fromString(call.parameters["id"])
+                notificationRepo.markRead(id, call.userId())
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Marked"))
+            }
+
+            // ===== Тренер/админ =====
             get("/clients") {
                 val search = call.request.queryParameters["search"] ?: ""
                 val clients = clientRepo.getAll(search)
@@ -113,7 +251,6 @@ fun Application.configureRouting() {
                 else call.respond(HttpStatusCode.OK, mapOf("message" to "Deleted"))
             }
 
-            // Subscriptions
             get("/clients/{id}/subscriptions") {
                 val clientId = UUID.fromString(call.parameters["id"])
                 val subs = subRepo.getByClientId(clientId)
@@ -150,7 +287,6 @@ fun Application.configureRouting() {
                 call.respond(HttpStatusCode.OK, mapOf("isFrozen" to !sub.isFrozen))
             }
 
-            // Visits
             get("/clients/{id}/visits") {
                 val clientId = UUID.fromString(call.parameters["id"])
                 val visits = visitRepo.getByClientId(clientId)
@@ -168,6 +304,42 @@ fun Application.configureRouting() {
                 val req = call.receive<VisitRequest>()
                 val id = visitRepo.create(clientId, Instant.parse(req.visitedAt), req.note)
                 call.respond(HttpStatusCode.Created, mapOf("id" to id.toString()))
+            }
+
+            // тренер видит все брони и подтверждает
+            get("/bookings") {
+                if (call.role() == UserRole.CLIENT) {
+                    call.respond(HttpStatusCode.Forbidden); return@get
+                }
+                val list = bookingRepo.getAll()
+                call.respond(list.map { (b, name) ->
+                    BookingResponse(b.id.toString(), b.clientId.toString(), name,
+                        b.scheduledAt.toString(), b.status.name, b.note)
+                })
+            }
+
+            patch("/bookings/{id}/status") {
+                if (call.role() == UserRole.CLIENT) {
+                    call.respond(HttpStatusCode.Forbidden); return@patch
+                }
+                val id = UUID.fromString(call.parameters["id"])
+                val req = call.receive<BookingStatusUpdate>()
+                val newStatus = BookingStatus.valueOf(req.status.uppercase())
+                val booking = bookingRepo.getById(id) ?: run {
+                    call.respond(HttpStatusCode.NotFound); return@patch
+                }
+                bookingRepo.setStatus(id, newStatus)
+                // уведомление клиенту
+                clientRepo.getById(booking.clientId)?.userId?.let { clientUserId ->
+                    val title = when (newStatus) {
+                        BookingStatus.CONFIRMED -> "Запись подтверждена"
+                        BookingStatus.CANCELLED -> "Запись отменена"
+                        BookingStatus.PENDING -> "Запись ожидает"
+                    }
+                    notificationRepo.create(clientUserId, title,
+                        "Тренировка на ${booking.scheduledAt.toString().substringBefore('T')}.")
+                }
+                call.respond(HttpStatusCode.OK, mapOf("status" to newStatus.name))
             }
         }
     }

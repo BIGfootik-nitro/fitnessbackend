@@ -1,6 +1,8 @@
 package com.example.data.db
 
+import com.example.data.db.tables.Bookings
 import com.example.data.db.tables.Clients
+import com.example.data.db.tables.Notifications
 import com.example.data.db.tables.Subscriptions
 import com.example.data.db.tables.Users
 import com.example.data.db.tables.Visits
@@ -23,7 +25,7 @@ object DatabaseFactory {
         }
         Database.connect(HikariDataSource(hikariConfig))
         transaction {
-            SchemaUtils.createMissingTablesAndColumns(Users, Clients, Subscriptions, Visits)
+            SchemaUtils.createMissingTablesAndColumns(Users, Clients, Subscriptions, Visits, Bookings, Notifications)
         }
     }
 }

@@ -24,17 +24,23 @@ class UserRepository {
     fun findByUsername(username: String): User? {
         return transaction {
             Users.selectAll().where { Users.username eq username }
-                .singleOrNull()
-                ?.let {
-                    User(
-                        id = it[Users.id].value,
-                        username = it[Users.username],
-                        passwordHash = it[Users.passwordHash],
-                        role = it[Users.role]
-                    )
-                }
+                .singleOrNull()?.toUser()
         }
     }
+
+    fun findById(id: UUID): User? {
+        return transaction {
+            Users.selectAll().where { Users.id eq id }
+                .singleOrNull()?.toUser()
+        }
+    }
+
+    private fun org.jetbrains.exposed.sql.ResultRow.toUser() = User(
+        id = this[Users.id].value,
+        username = this[Users.username],
+        passwordHash = this[Users.passwordHash],
+        role = this[Users.role]
+    )
 
     fun usernameExists(username: String): Boolean {
         return transaction {

@@ -6,6 +6,7 @@ import org.jetbrains.exposed.sql.javatime.date
 import org.jetbrains.exposed.sql.javatime.datetime
 
 object Clients : UUIDTable("clients") {
+    val userId = reference("user_id", Users).nullable()
     val fullName = text("full_name")
     val phone = text("phone").nullable()
     val email = text("email").nullable()

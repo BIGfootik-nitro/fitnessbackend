@@ -33,14 +33,22 @@ class ClientRepository {
         }
     }
 
-    fun create(fullName: String, phone: String?, email: String?, birthDate: LocalDate?): UUID {
+    fun create(fullName: String, phone: String?, email: String?, birthDate: LocalDate?, userId: UUID? = null): UUID {
         return transaction {
             Clients.insert {
                 it[Clients.fullName] = fullName
                 it[Clients.phone] = phone
                 it[Clients.email] = email
                 it[Clients.birthDate] = birthDate
+                it[Clients.userId] = userId
             }[Clients.id].value
+        }
+    }
+
+    fun getByUserId(userId: UUID): Client? {
+        return transaction {
+            Clients.selectAll().where { Clients.userId eq userId }
+                .singleOrNull()?.toClient()
         }
     }
 
@@ -65,6 +73,7 @@ class ClientRepository {
 
     private fun ResultRow.toClient() = Client(
         id = this[Clients.id].value,
+        userId = this[Clients.userId]?.value,
         fullName = this[Clients.fullName],
         phone = this[Clients.phone],
         email = this[Clients.email],
