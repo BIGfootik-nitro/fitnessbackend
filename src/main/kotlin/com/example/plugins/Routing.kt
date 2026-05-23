@@ -87,7 +87,14 @@ fun Application.configureRouting() {
                 val user = userRepo.findById(uid) ?: run {
                     call.respond(HttpStatusCode.NotFound); return@get
                 }
-                val client = clientRepo.getByUserId(uid)
+                // если клиент без профиля — создаём
+                var client = clientRepo.getByUserId(uid)
+                if (client == null && user.role == UserRole.CLIENT) {
+                    val cid = clientRepo.create(user.username, null, null, null, uid)
+                    client = clientRepo.getById(cid)
+                    notificationRepo.create(uid, "Добро пожаловать!",
+                        "Заполните профиль и оформите абонемент.")
+                }
                 call.respond(MeResponse(
                     userId = user.id.toString(),
                     username = user.username,
@@ -101,20 +108,22 @@ fun Application.configureRouting() {
             put("/me/profile") {
                 val uid = call.userId()
                 val req = call.receive<ClientRequest>()
-                val existing = clientRepo.getByUserId(uid) ?: run {
-                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
-                    return@put
+                val existing = clientRepo.getByUserId(uid)
+                if (existing == null) {
+                    // профиля нет — создаём
+                    val birthDate = req.birthDate?.let { LocalDate.parse(it) }
+                    clientRepo.create(req.fullName.ifBlank { "Client" }, req.phone, req.email, birthDate, uid)
+                    call.respond(HttpStatusCode.OK, mapOf("message" to "Created"))
+                } else {
+                    val birthDate = req.birthDate?.let { LocalDate.parse(it) }
+                    clientRepo.update(existing.id, req.fullName, req.phone, req.email, birthDate)
+                    call.respond(HttpStatusCode.OK, mapOf("message" to "Updated"))
                 }
-                val birthDate = req.birthDate?.let { LocalDate.parse(it) }
-                clientRepo.update(existing.id, req.fullName, req.phone, req.email, birthDate)
-                call.respond(HttpStatusCode.OK, mapOf("message" to "Updated"))
             }
 
             get("/me/subscriptions") {
-                val client = clientRepo.getByUserId(call.userId()) ?: run {
-                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
-                    return@get
-                }
+                val client = clientRepo.getByUserId(call.userId())
+                if (client == null) { call.respond(emptyList<Any>()); return@get }
                 val subs = subRepo.getByClientId(client.id)
                 call.respond(subs.map {
                     SubscriptionResponse(it.id.toString(), it.clientId.toString(), it.type.name,
@@ -125,7 +134,7 @@ fun Application.configureRouting() {
             post("/me/subscriptions") {
                 val uid = call.userId()
                 val client = clientRepo.getByUserId(uid) ?: run {
-                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Fill your profile first"))
                     return@post
                 }
                 val req = call.receive<SubscriptionRequest>()
@@ -140,10 +149,8 @@ fun Application.configureRouting() {
             }
 
             get("/me/visits") {
-                val client = clientRepo.getByUserId(call.userId()) ?: run {
-                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
-                    return@get
-                }
+                val client = clientRepo.getByUserId(call.userId())
+                if (client == null) { call.respond(emptyList<Any>()); return@get }
                 val visits = visitRepo.getByClientId(client.id)
                 call.respond(visits.map {
                     VisitResponse(it.id.toString(), it.clientId.toString(), it.visitedAt.toString(), it.note)
@@ -151,10 +158,8 @@ fun Application.configureRouting() {
             }
 
             get("/me/bookings") {
-                val client = clientRepo.getByUserId(call.userId()) ?: run {
-                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
-                    return@get
-                }
+                val client = clientRepo.getByUserId(call.userId())
+                if (client == null) { call.respond(emptyList<Any>()); return@get }
                 val bookings = bookingRepo.getByClientId(client.id)
                 call.respond(bookings.map {
                     BookingResponse(it.id.toString(), it.clientId.toString(), null,
@@ -165,7 +170,7 @@ fun Application.configureRouting() {
             post("/me/bookings") {
                 val uid = call.userId()
                 val client = clientRepo.getByUserId(uid) ?: run {
-                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Profile not found"))
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Fill your profile first"))
                     return@post
                 }
                 val req = call.receive<BookingRequest>()
@@ -177,9 +182,8 @@ fun Application.configureRouting() {
 
             patch("/me/bookings/{id}/cancel") {
                 val uid = call.userId()
-                val client = clientRepo.getByUserId(uid) ?: run {
-                    call.respond(HttpStatusCode.NotFound); return@patch
-                }
+                val client = clientRepo.getByUserId(uid)
+                if (client == null) { call.respond(HttpStatusCode.BadRequest); return@patch }
                 val id = UUID.fromString(call.parameters["id"])
                 val booking = bookingRepo.getById(id)
                 if (booking == null || booking.clientId != client.id) {
