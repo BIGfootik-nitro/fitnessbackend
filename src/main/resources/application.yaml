@@ -6,7 +6,7 @@ ktor:
       - com.example.ApplicationKt.module
 
 jwt:
-  secret: "fitness-secret-key-256-bit-long-enough"
+  secret: "$JWT_SECRET:**************************************"
   issuer: "fitness-app"
   audience: "fitness-app-users"
   expiry: 86400000
