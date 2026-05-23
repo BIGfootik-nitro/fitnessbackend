@@ -12,7 +12,7 @@ jwt:
   expiry: 86400000
 
 database:
-  url: "jdbc:postgresql://localhost:5432/fitnessdb"
+  url: "$DB_URL:jdbc:postgresql://localhost:5432/fitnessdb"
   driver: "org.postgresql.Driver"
-  user: "postgres"
-  password: "postgres"
+  user: "$DB_USER:postgres"
+  password: "$DB_PASSWORD:postgres"
