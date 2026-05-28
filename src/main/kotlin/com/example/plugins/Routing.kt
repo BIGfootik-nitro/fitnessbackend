@@ -7,6 +7,7 @@ import com.example.data.repository.*
 import com.example.domain.model.BookingStatus
 import com.example.domain.model.SubscriptionType
 import com.example.domain.model.UserRole
+import java.util.UUID
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -33,6 +34,7 @@ fun Application.configureRouting() {
     val visitRepo = VisitRepository()
     val bookingRepo = BookingRepository()
     val notificationRepo = NotificationRepository()
+    val sessionRepo = TrainingSessionRepository()
 
     val secret = environment.config.property("jwt.secret").getString()
     val issuer = environment.config.property("jwt.issuer").getString()
@@ -333,7 +335,6 @@ fun Application.configureRouting() {
                     call.respond(HttpStatusCode.NotFound); return@patch
                 }
                 bookingRepo.setStatus(id, newStatus)
-                // уведомление клиенту
                 clientRepo.getById(booking.clientId)?.userId?.let { clientUserId ->
                     val title = when (newStatus) {
                         BookingStatus.CONFIRMED -> "Запись подтверждена"
@@ -345,6 +346,127 @@ fun Application.configureRouting() {
                 }
                 call.respond(HttpStatusCode.OK, mapOf("status" to newStatus.name))
             }
+
+            // ===== Тренировки =====
+            get("/sessions") {
+                val all = if (call.role() == UserRole.CLIENT)
+                    sessionRepo.getUpcoming()
+                else
+                    sessionRepo.getAll()
+                call.respond(all.map { it.toResponse() })
+            }
+
+            post("/sessions") {
+                if (call.role() == UserRole.CLIENT) { call.respond(HttpStatusCode.Forbidden); return@post }
+                val req = call.receive<SessionRequest>()
+                val trainerId = if (call.role() == UserRole.TRAINER) call.userId() else null
+                val id = sessionRepo.create(req.title, req.description, Instant.parse(req.scheduledAt),
+                    req.durationMin, trainerId, req.maxCapacity)
+                call.respond(HttpStatusCode.Created, mapOf("id" to id.toString()))
+            }
+
+            put("/sessions/{id}") {
+                if (call.role() == UserRole.CLIENT) { call.respond(HttpStatusCode.Forbidden); return@put }
+                val id = UUID.fromString(call.parameters["id"])
+                val req = call.receive<SessionRequest>()
+                sessionRepo.update(id, req.title, req.description, Instant.parse(req.scheduledAt),
+                    req.durationMin, req.maxCapacity)
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Updated"))
+            }
+
+            delete("/sessions/{id}") {
+                if (call.role() != UserRole.ADMIN) { call.respond(HttpStatusCode.Forbidden); return@delete }
+                val id = UUID.fromString(call.parameters["id"])
+                sessionRepo.delete(id)
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Deleted"))
+            }
+
+            post("/sessions/{id}/book") {
+                val sessionId = UUID.fromString(call.parameters["id"])
+                val client = clientRepo.getByUserId(call.userId()) ?: run {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Fill your profile first"))
+                    return@post
+                }
+                val session = sessionRepo.getById(sessionId) ?: run {
+                    call.respond(HttpStatusCode.NotFound); return@post
+                }
+                if (session.bookedCount >= session.maxCapacity) {
+                    call.respond(HttpStatusCode.Conflict, mapOf("error" to "Нет мест")); return@post
+                }
+                if (bookingRepo.alreadyBooked(client.id, sessionId)) {
+                    call.respond(HttpStatusCode.Conflict, mapOf("error" to "Уже записан")); return@post
+                }
+                val bookId = bookingRepo.create(client.id, session.scheduledAt, null, sessionId)
+                notificationRepo.create(call.userId(), "Запись принята",
+                    "Вы записаны на «${session.title}» — ${session.scheduledAt.toString().substringBefore('T')}.")
+                call.respond(HttpStatusCode.Created, mapOf("id" to bookId.toString()))
+            }
+
+            get("/sessions/{id}/attendees") {
+                if (call.role() == UserRole.CLIENT) { call.respond(HttpStatusCode.Forbidden); return@get }
+                val sessionId = UUID.fromString(call.parameters["id"])
+                val list = bookingRepo.getBySessionId(sessionId)
+                call.respond(list.map { (b, name) ->
+                    SessionAttendeeResponse(b.id.toString(), b.clientId.toString(), name, b.status.name)
+                })
+            }
+
+            post("/sessions/{id}/attend/{bookingId}") {
+                if (call.role() == UserRole.CLIENT) { call.respond(HttpStatusCode.Forbidden); return@post }
+                val bookingId = UUID.fromString(call.parameters["bookingId"])
+                val booking = bookingRepo.getById(bookingId) ?: run {
+                    call.respond(HttpStatusCode.NotFound); return@post
+                }
+                bookingRepo.setStatus(bookingId, BookingStatus.CONFIRMED)
+                visitRepo.create(booking.clientId, booking.scheduledAt, "Тренировка")
+                clientRepo.getById(booking.clientId)?.userId?.let { uid ->
+                    notificationRepo.create(uid, "Посещение отмечено", "Ваше посещение тренировки подтверждено.")
+                }
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Attended"))
+            }
+
+            // ===== Абонементы — редактирование (только админ) =====
+            put("/subscriptions/{id}") {
+                if (call.role() != UserRole.ADMIN) { call.respond(HttpStatusCode.Forbidden); return@put }
+                val id = UUID.fromString(call.parameters["id"])
+                val req = call.receive<SubscriptionRequest>()
+                val type = SubscriptionType.valueOf(req.type.uppercase())
+                subRepo.update(id, type, LocalDate.parse(req.startDate),
+                    LocalDate.parse(req.endDate), BigDecimal(req.price))
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Updated"))
+            }
+
+            delete("/subscriptions/{id}") {
+                if (call.role() != UserRole.ADMIN) { call.respond(HttpStatusCode.Forbidden); return@delete }
+                val id = UUID.fromString(call.parameters["id"])
+                subRepo.delete(id)
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Deleted"))
+            }
+
+            // ===== Посещения — удаление (только админ) =====
+            delete("/visits/{id}") {
+                if (call.role() != UserRole.ADMIN) { call.respond(HttpStatusCode.Forbidden); return@delete }
+                val id = UUID.fromString(call.parameters["id"])
+                visitRepo.delete(id)
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Deleted"))
+            }
+
+            get("/admin/visits") {
+                if (call.role() != UserRole.ADMIN) { call.respond(HttpStatusCode.Forbidden); return@get }
+                val all = visitRepo.getAll()
+                call.respond(all.map { VisitResponse(it.id.toString(), it.clientId.toString(), it.visitedAt.toString(), it.note) })
+            }
         }
     }
 }
+
+private fun com.example.domain.model.TrainingSession.toResponse() = SessionResponse(
+    id = id.toString(),
+    title = title,
+    description = description,
+    scheduledAt = scheduledAt.toString(),
+    durationMin = durationMin,
+    trainerName = trainerName,
+    maxCapacity = maxCapacity,
+    bookedCount = bookedCount
+)

@@ -8,6 +8,7 @@ import org.jetbrains.exposed.sql.javatime.timestamp
 
 object Bookings : UUIDTable("bookings") {
     val clientId = reference("client_id", Clients)
+    val sessionId = reference("session_id", TrainingSessions).nullable()
     val scheduledAt = timestamp("scheduled_at")
     val status = enumerationByName("status", 16, BookingStatus::class)
     val note = text("note").nullable()

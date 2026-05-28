@@ -2,10 +2,8 @@ package com.example.data.repository
 
 import com.example.data.db.tables.Visits
 import com.example.domain.model.Visit
-import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.Instant
 import java.util.UUID
@@ -27,13 +25,20 @@ class VisitRepository {
         }
     }
 
-    fun create(clientId: UUID, visitedAt: Instant, note: String?): UUID {
-        return transaction {
-            Visits.insert {
-                it[Visits.clientId] = clientId
-                it[Visits.visitedAt] = visitedAt
-                it[Visits.note] = note
-            }[Visits.id].value
-        }
+    fun create(clientId: UUID, visitedAt: Instant, note: String?): UUID = transaction {
+        Visits.insert {
+            it[Visits.clientId] = clientId
+            it[Visits.visitedAt] = visitedAt
+            it[Visits.note] = note
+        }[Visits.id].value
+    }
+
+    fun delete(id: UUID): Boolean = transaction {
+        Visits.deleteWhere { Visits.id eq id } > 0
+    }
+
+    fun getAll(): List<Visit> = transaction {
+        Visits.selectAll().orderBy(Visits.visitedAt, SortOrder.DESC)
+            .map { Visit(it[Visits.id].value, it[Visits.clientId].value, it[Visits.visitedAt], it[Visits.note]) }
     }
 }

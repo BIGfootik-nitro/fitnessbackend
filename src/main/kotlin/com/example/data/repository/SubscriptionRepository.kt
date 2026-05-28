@@ -6,6 +6,7 @@ import com.example.domain.model.SubscriptionType
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.deleteWhere
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
@@ -39,12 +40,21 @@ class SubscriptionRepository {
         }
     }
 
-    fun setFrozen(id: UUID, frozen: Boolean): Boolean {
-        return transaction {
-            Subscriptions.update({ Subscriptions.id eq id }) {
-                it[isFrozen] = frozen
-            } > 0
-        }
+    fun setFrozen(id: UUID, frozen: Boolean): Boolean = transaction {
+        Subscriptions.update({ Subscriptions.id eq id }) { it[isFrozen] = frozen } > 0
+    }
+
+    fun update(id: UUID, type: SubscriptionType, startDate: LocalDate, endDate: LocalDate, price: BigDecimal): Boolean = transaction {
+        Subscriptions.update({ Subscriptions.id eq id }) {
+            it[Subscriptions.type] = type
+            it[Subscriptions.startDate] = startDate
+            it[Subscriptions.endDate] = endDate
+            it[Subscriptions.price] = price
+        } > 0
+    }
+
+    fun delete(id: UUID): Boolean = transaction {
+        Subscriptions.deleteWhere { Subscriptions.id eq id } > 0
     }
 
     private fun ResultRow.toSubscription() = Subscription(

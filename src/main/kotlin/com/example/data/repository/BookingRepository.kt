@@ -12,13 +12,27 @@ import java.util.UUID
 
 class BookingRepository {
 
-    fun create(clientId: UUID, scheduledAt: Instant, note: String?): UUID = transaction {
+    fun create(clientId: UUID, scheduledAt: Instant, note: String?, sessionId: UUID? = null): UUID = transaction {
         Bookings.insert {
             it[Bookings.clientId] = clientId
+            it[Bookings.sessionId] = sessionId
             it[Bookings.scheduledAt] = scheduledAt
             it[Bookings.status] = BookingStatus.PENDING
             it[Bookings.note] = note
         }[Bookings.id].value
+    }
+
+    fun getBySessionId(sessionId: UUID): List<Pair<Booking, String>> = transaction {
+        (Bookings innerJoin Clients).selectAll()
+            .where { Bookings.sessionId eq sessionId }
+            .orderBy(Bookings.createdAt, SortOrder.ASC)
+            .map { row -> row.toBooking() to row[Clients.fullName] }
+    }
+
+    fun alreadyBooked(clientId: UUID, sessionId: UUID): Boolean = transaction {
+        Bookings.selectAll()
+            .where { (Bookings.clientId eq clientId) and (Bookings.sessionId eq sessionId) }
+            .any()
     }
 
     fun getById(id: UUID): Booking? = transaction {

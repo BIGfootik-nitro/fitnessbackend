@@ -4,6 +4,7 @@ import com.example.data.db.tables.Bookings
 import com.example.data.db.tables.Clients
 import com.example.data.db.tables.Notifications
 import com.example.data.db.tables.Subscriptions
+import com.example.data.db.tables.TrainingSessions
 import com.example.data.db.tables.Users
 import com.example.data.db.tables.Visits
 import com.zaxxer.hikari.HikariConfig
@@ -25,7 +26,7 @@ object DatabaseFactory {
         }
         Database.connect(HikariDataSource(hikariConfig))
         transaction {
-            SchemaUtils.createMissingTablesAndColumns(Users, Clients, Subscriptions, Visits, Bookings, Notifications)
+            SchemaUtils.createMissingTablesAndColumns(Users, Clients, Subscriptions, Visits, TrainingSessions, Bookings, Notifications)
         }
     }
 }
