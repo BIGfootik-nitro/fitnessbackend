@@ -362,6 +362,15 @@ fun Application.configureRouting() {
                 call.respond(all.map { it.toResponse() })
             }
 
+            get("/sessions/{id}") {
+                val id = UUID.fromString(call.parameters["id"])
+                val session = sessionRepo.getById(id) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Session not found"))
+                    return@get
+                }
+                call.respond(session.toResponse())
+            }
+
             post("/sessions") {
                 if (call.role() == UserRole.CLIENT) { call.respond(HttpStatusCode.Forbidden); return@post }
                 val req = call.receive<SessionRequest>()
