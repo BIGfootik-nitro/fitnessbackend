@@ -135,16 +135,20 @@ fun Application.configureRouting() {
 
             post("/me/subscriptions") {
                 val uid = call.userId()
-                val client = clientRepo.getByUserId(uid) ?: run {
-                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Fill your profile first"))
-                    return@post
+                var client = clientRepo.getByUserId(uid)
+                if (client == null) {
+                    val user = userRepo.findById(uid)!!
+                    val cid = clientRepo.create(user.username, null, null, null, uid)
+                    client = clientRepo.getById(cid)!!
                 }
                 val req = call.receive<SubscriptionRequest>()
-                val type = SubscriptionType.valueOf(req.type.uppercase())
-                val id = subRepo.create(client.id, type,
-                    LocalDate.parse(req.startDate),
-                    LocalDate.parse(req.endDate),
-                    BigDecimal(req.price))
+                val type = runCatching { SubscriptionType.valueOf(req.type.uppercase()) }.getOrElse {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid type")); return@post
+                }
+                val price = runCatching { BigDecimal(req.price.replace(",", ".").replace(" ", "")) }.getOrElse {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid price")); return@post
+                }
+                val id = subRepo.create(client.id, type, LocalDate.parse(req.startDate), LocalDate.parse(req.endDate), price)
                 notificationRepo.create(uid, "Абонемент оформлен",
                     "Ваш ${type.name.lowercase()} абонемент активен с ${req.startDate} по ${req.endDate}.")
                 call.respond(HttpStatusCode.Created, mapOf("id" to id.toString()))
@@ -171,9 +175,11 @@ fun Application.configureRouting() {
 
             post("/me/bookings") {
                 val uid = call.userId()
-                val client = clientRepo.getByUserId(uid) ?: run {
-                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Fill your profile first"))
-                    return@post
+                var client = clientRepo.getByUserId(uid)
+                if (client == null) {
+                    val user = userRepo.findById(uid)!!
+                    val cid = clientRepo.create(user.username, null, null, null, uid)
+                    client = clientRepo.getById(cid)!!
                 }
                 val req = call.receive<BookingRequest>()
                 val id = bookingRepo.create(client.id, Instant.parse(req.scheduledAt), req.note)
@@ -273,13 +279,13 @@ fun Application.configureRouting() {
                     return@post
                 }
                 val req = call.receive<SubscriptionRequest>()
-                val type = SubscriptionType.valueOf(req.type.uppercase())
-                val id = subRepo.create(
-                    clientId, type,
-                    LocalDate.parse(req.startDate),
-                    LocalDate.parse(req.endDate),
-                    BigDecimal(req.price)
-                )
+                val type = runCatching { SubscriptionType.valueOf(req.type.uppercase()) }.getOrElse {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid type")); return@post
+                }
+                val price = runCatching { BigDecimal(req.price.replace(",", ".").replace(" ", "")) }.getOrElse {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid price")); return@post
+                }
+                val id = subRepo.create(clientId, type, LocalDate.parse(req.startDate), LocalDate.parse(req.endDate), price)
                 call.respond(HttpStatusCode.Created, mapOf("id" to id.toString()))
             }
 
@@ -382,11 +388,16 @@ fun Application.configureRouting() {
             }
 
             post("/sessions/{id}/book") {
-                val sessionId = UUID.fromString(call.parameters["id"])
-                val client = clientRepo.getByUserId(call.userId()) ?: run {
-                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Fill your profile first"))
-                    return@post
+                val uid = call.userId()
+                var client = clientRepo.getByUserId(uid)
+                if (client == null) {
+                    val user = userRepo.findById(uid) ?: run {
+                        call.respond(HttpStatusCode.NotFound); return@post
+                    }
+                    val cid = clientRepo.create(user.username, null, null, null, uid)
+                    client = clientRepo.getById(cid)!!
                 }
+                val sessionId = UUID.fromString(call.parameters["id"])
                 val session = sessionRepo.getById(sessionId) ?: run {
                     call.respond(HttpStatusCode.NotFound); return@post
                 }
